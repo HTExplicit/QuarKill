@@ -20,6 +20,7 @@ import de.robv.android.xposed.XposedBridge;
 final class HighestSourceQuality {
     private static final String PLAYER = "com.ucpro.feature.video.player.";
     private static final String ACTION_TAG = "dev.quark.kill.highestSourceQuality";
+    private static final String INTELLIGENT_CINEMA_TIER = "ai";
     private static final int WEB_SCENE = 100000;
 
     private record Source(Object resolution, String tier, int width, int height) {
@@ -40,6 +41,7 @@ final class HighestSourceQuality {
         boundState.setAccessible(true);
 
         Method scene = state.getMethod("t0");
+        Method supportsIntelligentCinema = state.getMethod("e3");
         Method availableResolutions = state.getMethod("j1");
         Method currentResolution = state.getMethod("d0");
         Method tier = resolution.getMethod("m");
@@ -62,7 +64,7 @@ final class HighestSourceQuality {
 
                 Source best = highest(data);
                 Object current = currentResolution.invoke(data);
-                if (best == null || current == null) return;
+                if (current == null) return;
 
                 Context context = root.getContext();
                 int titleId = context.getResources().getIdentifier("tv_video_resolution_panel_title", "id", context.getPackageName());
@@ -72,36 +74,55 @@ final class HighestSourceQuality {
                 LinearLayout group = (LinearLayout) title.getParent();
                 if (group.getOrientation() != LinearLayout.VERTICAL) return;
 
-                boolean alreadySelected = best.tier().equals(tier.invoke(current));
-                Button action = new Button(context);
-                action.setTag(ACTION_TAG);
-                action.setAllCaps(false);
-                action.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-                action.setTextColor(((TextView) title).getTextColors());
-                action.setTextSize(14);
-                action.setMinHeight((int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 48,
-                        context.getResources().getDisplayMetrics()));
-                TypedValue background = new TypedValue();
-                if (context.getTheme().resolveAttribute(android.R.attr.selectableItemBackground, background, true)
-                        && background.resourceId != 0) action.setBackgroundResource(background.resourceId);
-                action.setText((alreadySelected ? "当前为片源最高  " : "切换到片源最高  ")
-                        + best.width() + "×" + best.height());
-                action.setEnabled(!alreadySelected);
-                action.setOnClickListener(view -> {
-                    try {
-                        if (enabled.getAsBoolean() && boundState.get(root) == data && root.isShown()) {
-                            Source latest = highest(data);
-                            Object playing = currentResolution.invoke(data);
-                            if (latest != null && playing != null && !latest.tier().equals(tier.invoke(playing))) {
-                                switchQuality.invoke(null, root, latest.resolution(), true);
-                            }
-                        }
-                    } catch (ReflectiveOperationException | RuntimeException e) {
-                        QuarkLiteHook.logDiagnostic("web video highest source selection failed: " + e.getClass().getSimpleName());
-                    }
-                });
-                group.addView(action, group.indexOfChild(title) + 1,
+                LinearLayout actions = new LinearLayout(context);
+                actions.setTag(ACTION_TAG);
+                actions.setOrientation(LinearLayout.HORIZONTAL);
+                Object currentTier = tier.invoke(current);
+                boolean cinemaSelected = INTELLIGENT_CINEMA_TIER.equals(currentTier);
+                boolean cinemaAvailable = intelligentCinema(data) != null;
+                String cinemaLabel = cinemaSelected ? "至臻影音已启用"
+                        : cinemaAvailable ? "至臻影音" : "至臻影音不可用";
+                addButton(actions, (TextView) title, cinemaLabel, cinemaAvailable && !cinemaSelected,
+                        view -> select(root, data, true));
+                if (best != null) {
+                    boolean alreadySelected = best.tier().equals(currentTier);
+                    String qualityLabel = (alreadySelected ? "当前为片源最高\n" : "切换到片源最高\n")
+                            + best.width() + "×" + best.height();
+                    addButton(actions, (TextView) title, qualityLabel, !alreadySelected,
+                            view -> select(root, data, false));
+                }
+                group.addView(actions, group.indexOfChild(title) + 1,
                         new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            }
+
+            private void select(ViewGroup panelView, Object data, boolean cinema) {
+                try {
+                    if (!enabled.getAsBoolean() || boundState.get(panelView) != data || !panelView.isShown()) return;
+                    Object playing = currentResolution.invoke(data);
+                    if (playing == null) return;
+                    Source best = cinema ? null : highest(data);
+                    Object target = cinema ? intelligentCinema(data) : best == null ? null : best.resolution();
+                    if (target != null && !tier.invoke(target).equals(tier.invoke(playing))) {
+                        // Use the same selection callback as the native tile, including its access checks.
+                        switchQuality.invoke(null, panelView, target, true);
+                        QuarkLiteHook.logDiagnostic(cinema ? "web video requested native intelligent cinema"
+                                : "web video requested highest source quality");
+                    }
+                } catch (ReflectiveOperationException | RuntimeException e) {
+                    QuarkLiteHook.logDiagnostic("web video quality selection failed: " + e.getClass().getSimpleName());
+                }
+            }
+
+            private Object intelligentCinema(Object data) throws ReflectiveOperationException {
+                if (!Boolean.TRUE.equals(supportsIntelligentCinema.invoke(data))) return null;
+                Object available = availableResolutions.invoke(data);
+                if (!(available instanceof List)) return null;
+                for (Object candidate : (List<?>) available) {
+                    if (resolution.isInstance(candidate) && INTELLIGENT_CINEMA_TIER.equals(tier.invoke(candidate))) {
+                        return candidate;
+                    }
+                }
+                return null;
             }
 
             private Source highest(Object data) throws ReflectiveOperationException {
@@ -112,7 +133,7 @@ final class HighestSourceQuality {
                     if (!resolution.isInstance(candidate) || !"normal".equals(access.invoke(candidate))
                             || !Boolean.TRUE.equals(isPlayable.invoke(candidate))) continue;
                     String label = (String) tier.invoke(candidate);
-                    if (label == null || label.isEmpty() || "ai".equals(label) || "raw".equals(label)
+                    if (label == null || label.isEmpty() || INTELLIGENT_CINEMA_TIER.equals(label) || "raw".equals(label)
                             || "unknown".equals(label)) continue;
                     String url = (String) streamUrl.invoke(candidate);
                     if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) continue;
@@ -126,5 +147,24 @@ final class HighestSourceQuality {
                 return best;
             }
         });
+    }
+
+    private static void addButton(LinearLayout row, TextView title, String label, boolean enabled,
+            View.OnClickListener clickListener) {
+        Context context = row.getContext();
+        Button action = new Button(context);
+        action.setAllCaps(false);
+        action.setGravity(Gravity.CENTER);
+        action.setTextColor(title.getTextColors());
+        action.setTextSize(14);
+        action.setMinHeight((int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 48,
+                context.getResources().getDisplayMetrics()));
+        TypedValue background = new TypedValue();
+        if (context.getTheme().resolveAttribute(android.R.attr.selectableItemBackground, background, true)
+                && background.resourceId != 0) action.setBackgroundResource(background.resourceId);
+        action.setText(label);
+        action.setEnabled(enabled);
+        action.setOnClickListener(clickListener);
+        row.addView(action, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
     }
 }
