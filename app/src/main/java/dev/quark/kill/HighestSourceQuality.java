@@ -103,7 +103,7 @@ final class HighestSourceQuality {
                     Source best = cinema ? null : highest(data);
                     Object target = cinema ? intelligentCinema(data) : best == null ? null : best.resolution();
                     if (target != null && !tier.invoke(target).equals(tier.invoke(playing))) {
-                        // Use the same selection callback as the native tile, including its access checks.
+                        // Both buttons use the native selection callback; the cinema hook applies local filters.
                         switchQuality.invoke(null, panelView, target, true);
                         QuarkLiteHook.logDiagnostic(cinema ? "web video requested native intelligent cinema"
                                 : "web video requested highest source quality");
@@ -133,7 +133,7 @@ final class HighestSourceQuality {
                     if (!resolution.isInstance(candidate) || !"normal".equals(access.invoke(candidate))
                             || !Boolean.TRUE.equals(isPlayable.invoke(candidate))) continue;
                     String label = (String) tier.invoke(candidate);
-                    if (label == null || label.isEmpty() || INTELLIGENT_CINEMA_TIER.equals(label) || "raw".equals(label)
+                    if (label == null || label.isEmpty() || INTELLIGENT_CINEMA_TIER.equals(label)
                             || "unknown".equals(label)) continue;
                     String url = (String) streamUrl.invoke(candidate);
                     if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) continue;

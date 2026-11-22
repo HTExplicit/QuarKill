@@ -57,6 +57,11 @@ final class WebVideoHooks {
                                 QuarkLiteHook.logDiagnostic("web video highest source binding unavailable: " + e.getClass().getSimpleName());
                             }
                             try {
+                                IntelligentCinemaHooks.install(loader, enabled);
+                            } catch (Exception | LinkageError e) {
+                                QuarkLiteHook.logDiagnostic("intelligent cinema binding unavailable: " + e.getClass().getSimpleName());
+                            }
+                            try {
                                 installProjectionVisibility(loader, enabled);
                             } catch (Exception | LinkageError e) {
                                 QuarkLiteHook.logDiagnostic("web video projection binding unavailable: " + e.getClass().getSimpleName());
