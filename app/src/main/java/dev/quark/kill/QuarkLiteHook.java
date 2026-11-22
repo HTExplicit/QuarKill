@@ -29,16 +29,18 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-/** Quark 10.19 experimental UI-only module. No entitlement, security or network bypass. */
+/** Quark browser UI hooks and optional request filtering. */
 public final class QuarkLiteHook implements IXposedHookLoadPackage {
     private static final String TARGET = "com.quark.browser";
+    private static final String MODULE = "dev.quark.kill";
+    private static final String HOME_SEARCH_BOX = "com.ucpro.feature.homepage.widget.HomeAiSuperInputBox";
     private static final AtomicInteger LOGS = new AtomicInteger();
     private static final AtomicInteger PLUS_MISSES = new AtomicInteger();
     private static final AtomicInteger DNS_BLOCKS = new AtomicInteger();
     private static final AtomicInteger WEB_BLOCKS = new AtomicInteger();
     private static final WeakHashMap<View, Boolean> SEARCH_BOX_GUARDS = new WeakHashMap<>();
     private static final WeakHashMap<View, Boolean> AI_GUARDS = new WeakHashMap<>();
-    // Refresh at most once every 2 seconds so Settings changes reach Quark without
+    // Refresh at most once every 5 seconds so Settings changes reach Quark without
     // a process restart while avoiding a ContentProvider IPC on each UI draw.
     private static final java.util.concurrent.ConcurrentHashMap<String, Boolean> FLAGS = new java.util.concurrent.ConcurrentHashMap<>();
     private static final java.util.concurrent.ConcurrentHashMap<String, Boolean> LAST_GOOD_FLAGS = new java.util.concurrent.ConcurrentHashMap<>();
@@ -128,6 +130,10 @@ public final class QuarkLiteHook implements IXposedHookLoadPackage {
             XposedBridge.log("QuarkKill/2.4.1 " + s);
     }
 
+    static void logDiagnostic(String message) {
+        if (flag("diagnostic")) XposedBridge.log("QuarkKill " + message);
+    }
+
     @Override public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) {
         if (!TARGET.equals(lp.packageName) || !TARGET.equals(lp.processName)) return;
         // Successful injection is intentionally silent.
@@ -141,6 +147,7 @@ public final class QuarkLiteHook implements IXposedHookLoadPackage {
         hookMenuDialog();
         hookQuickMenuWindows();
         installConfigRecovery();
+        WebVideoHooks.installOnAttach(TARGET, lp.classLoader, () -> flag(LiteConfigProvider.WEB_VIDEO));
     }
 
     // Re-read settings after application initialization. Cold-start reads can fail
@@ -190,7 +197,7 @@ public final class QuarkLiteHook implements IXposedHookLoadPackage {
                 });
                 count++;
             }
-            log("toolbar methods=" + count);
+            if (count == 0) logDiagnostic("toolbar binding unavailable");
         } catch (Throwable t) { log("toolbar class unavailable " + t); }
     }
 
@@ -238,7 +245,7 @@ public final class QuarkLiteHook implements IXposedHookLoadPackage {
                             
                         }
                     }).size();
-                    log("hook " + name + "=" + count);
+                    if (count == 0) logDiagnostic("homepage binding unavailable: " + name);
                 } catch (Throwable t) { log("hook " + name + " failed " + t); }
             }
 
@@ -376,7 +383,7 @@ public final class QuarkLiteHook implements IXposedHookLoadPackage {
         return current;
     }
 
-    // HomePage lifecycle is more reliable than MainActivity.onResume on cold start.
+    // HomePage lifecycle is more reliable than the activity resume callback on cold start.
     // Install a one-shot layout observer on the actual homepage view.
 
     // Hide only the three action tiles within HomeAiSuperInputBox.
@@ -389,8 +396,7 @@ public final class QuarkLiteHook implements IXposedHookLoadPackage {
         ViewGroup group = (ViewGroup) home;
         for (int i = 0; i < group.getChildCount(); i++) {
             View child = group.getChildAt(i);
-            if ("com.ucpro.feature.homepage.widget.HomeAiSuperInputBox".equals(
-                    child.getClass().getName())) {
+            if (HOME_SEARCH_BOX.equals(child.getClass().getName())) {
                 log("search-box found from homepage child");
                 installSearchBoxGuard(child);
                 return;
@@ -404,8 +410,7 @@ public final class QuarkLiteHook implements IXposedHookLoadPackage {
         ViewGroup group = (ViewGroup) home;
         for (int i = 0; i < group.getChildCount(); i++) {
             View child = group.getChildAt(i);
-            if ("com.ucpro.feature.homepage.widget.HomeAiSuperInputBox".equals(
-                    child.getClass().getName())) {
+            if (HOME_SEARCH_BOX.equals(child.getClass().getName())) {
                 log("search-box found from homepage delayed child");
                 installSearchBoxGuard(child);
                 return;
@@ -416,9 +421,9 @@ public final class QuarkLiteHook implements IXposedHookLoadPackage {
 
     private static void hookSearchBox(ClassLoader cl) {
         try {
-            Class<?> box = XposedHelpers.findClass(
-                "com.ucpro.feature.homepage.widget.HomeAiSuperInputBox", cl);
-            XposedBridge.hookAllMethods(box, "onAttachedToWindow", new XC_MethodHook() {
+            Class<?> box = XposedHelpers.findClass(HOME_SEARCH_BOX, cl);
+            // The 1191 search box inherits its attach callback from the parent class.
+            XposedBridge.hookAllConstructors(box, new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     if (!(p.thisObject instanceof View)) return;
                     View v = (View) p.thisObject;
@@ -440,6 +445,27 @@ public final class QuarkLiteHook implements IXposedHookLoadPackage {
     }
 
     private static void hideSearchBoxActions(ViewGroup box) {
+        boolean hidePlus = flag("plus");
+        boolean hideVoice = flag("voice");
+        boolean hideCamera = flag("camera");
+        if (!hidePlus && !hideVoice && !hideCamera) return;
+
+        if (HOME_SEARCH_BOX.equals(box.getClass().getName())) {
+            try {
+                View plus = (View) XposedHelpers.callMethod(box, "getMAiPickBtn");
+                View voice = (View) XposedHelpers.callMethod(box, "getMVoiceContainer");
+                View camera = (View) XposedHelpers.callMethod(box, "getMCameraContainer");
+                if (hidePlus && plus != null) keepSearchActionHidden(plus, "plus");
+                if (hideVoice && voice != null) keepSearchActionHidden(voice, "voice");
+                if (hideCamera && camera != null) keepSearchActionHidden(camera, "qrcode");
+                return;
+            } catch (NoSuchMethodError ignored) {
+                // Older search boxes are identified by their resource IDs below.
+            } catch (RuntimeException e) {
+                if (PLUS_MISSES.getAndIncrement() < 3) logDiagnostic("search box binding failed: " + e.getClass().getSimpleName());
+            }
+        }
+
         View voice = null, qr = null;
         for (int i = 0; i < box.getChildCount(); i++) {
             View child = box.getChildAt(i);
@@ -479,13 +505,13 @@ public final class QuarkLiteHook implements IXposedHookLoadPackage {
             }
         }
         if (plus != null) {
-            if (flag("plus")) keepSearchActionHidden(plus, "plus");
+            if (hidePlus) keepSearchActionHidden(plus, "plus");
         } else if (box.getWidth() > 0 && PLUS_MISSES.getAndIncrement() < 3) {
             log("search-box plus candidate missing children=" + box.getChildCount()
                 + " width=" + box.getWidth());
         }
-        if (flag("voice")) keepSearchActionHidden(voice, "voice");
-        if (flag("camera")) keepSearchActionHidden(qr, "qrcode");
+        if (hideVoice) keepSearchActionHidden(voice, "voice");
+        if (hideCamera) keepSearchActionHidden(qr, "qrcode");
     }
 
     private static void keepSearchActionHidden(View v, String name) {
@@ -512,9 +538,16 @@ public final class QuarkLiteHook implements IXposedHookLoadPackage {
     private static final java.util.WeakHashMap<Activity, Boolean> SETTINGS_WATCHERS =
         new java.util.WeakHashMap<>();
     private static final int SETTINGS_ENTRY_ID = 0x5a711e;
+
+    private static Class<?> browserActivity(ClassLoader cl) {
+        Class<?> browser = XposedHelpers.findClassIfExists("com.ucpro.BrowserActivity", cl);
+        if (browser != null && XposedHelpers.findMethodExactIfExists(browser, "onResume") != null) return browser;
+        return XposedHelpers.findClass("com.ucpro.MainActivity", cl);
+    }
+
     private static void hookSettingsEntry(ClassLoader cl) {
         try {
-            Class<?> main = XposedHelpers.findClass("com.ucpro.MainActivity", cl);
+            Class<?> main = browserActivity(cl);
             XposedBridge.hookAllMethods(main, "onResume", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     if (!(p.thisObject instanceof Activity)) return;
@@ -596,7 +629,7 @@ public final class QuarkLiteHook implements IXposedHookLoadPackage {
             entry.setOnClickListener(v -> {
                 try {
                     android.content.Intent intent = new android.content.Intent();
-                    intent.setClassName("dev.quarklite", "dev.quarklite.SettingsActivity");
+                    intent.setClassName(MODULE, MODULE + ".SettingsActivity");
                     activity.startActivity(intent);
                 } catch (Throwable t) { log("settings entry launch failed " + t); }
             });
@@ -607,7 +640,7 @@ public final class QuarkLiteHook implements IXposedHookLoadPackage {
 
     private static void hookActivityUi(ClassLoader cl) {
         try {
-            Class<?> main = XposedHelpers.findClass("com.ucpro.MainActivity", cl);
+            Class<?> main = browserActivity(cl);
             XposedBridge.hookAllMethods(main, "onResume", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     if (!(p.thisObject instanceof Activity)) return;
@@ -647,9 +680,10 @@ public final class QuarkLiteHook implements IXposedHookLoadPackage {
             CharSequence description = v.getContentDescription();
             String desc = description == null ? "" : description.toString().trim();
             boolean bottom = rect.top > screenHeight * 0.79f;
-            if (bottom && (desc.equals("小说") || desc.equals("书城") ||
-                    desc.equals("语音搜索") || desc.equals("语音输入") ||
-                    desc.equals("语音"))) {
+            boolean hideNovel = (desc.equals("小说") || desc.equals("书城")) && flag("novel");
+            boolean hideVoice = (desc.equals("语音搜索") || desc.equals("语音输入") ||
+                    desc.equals("语音")) && flag("voice");
+            if (bottom && (hideNovel || hideVoice)) {
                 v.setVisibility(View.GONE);
                 log("accessibility-labeled UI hidden: " + desc);
                 return;

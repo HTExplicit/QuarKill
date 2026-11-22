@@ -14,9 +14,10 @@ public final class SettingsActivity extends Activity {
   {"首页精简","plus","ai","swipe"},
   {"搜索与菜单","novel","cloud"},
   {"广告与推广","dns","webads"},
+  {"网页视频",LiteConfigProvider.WEB_VIDEO},
   {"界面与维护","diagnostic"}
  };
- private final String[] names={"隐藏搜索框加号","隐藏搜索框语音","隐藏搜索框相机","隐藏首页 AI 入口","禁止左滑进入 AI","隐藏双模式指示点","隐藏搜索结果页语音","隐藏小说／书城入口","隐藏网盘推广入口","隐藏其他快捷入口","拦截广告域名","过滤网页广告请求","屏蔽开屏广告","屏蔽摇一摇跳转","隐藏会员推广提示","隐藏非必要更新推荐","详细调试日志"};
+ private final String[] names={"隐藏搜索框加号","隐藏搜索框语音","隐藏搜索框相机","隐藏首页 AI 入口","禁止左滑进入 AI","隐藏双模式指示点","隐藏搜索结果页语音","隐藏小说／书城入口","隐藏网盘推广入口","隐藏其他快捷入口","拦截广告域名","过滤网页广告请求","屏蔽开屏广告","屏蔽摇一摇跳转","隐藏会员推广提示","隐藏非必要更新推荐","详细调试日志","网页视频增强"};
  private int index(String key){for(int i=0;i<LiteConfigProvider.KEYS.length;i++)if(LiteConfigProvider.KEYS[i].equals(key))return i;return -1;}
  private int dp(float n){return (int)(n*getResources().getDisplayMetrics().density+0.5f);}
  @Override public void onCreate(Bundle b){super.onCreate(b);render();new Handler(Looper.getMainLooper()).postDelayed(this::launchSupportSafely,350);}
@@ -25,15 +26,16 @@ public final class SettingsActivity extends Activity {
   LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(dp(20),dp(20),dp(20),dp(30));root.setBackgroundColor(Color.rgb(248,249,252));
   scroll.addView(root);setContentView(scroll);
   TextView title=new TextView(this);title.setText("Quark Kill");title.setTextSize(27);title.setTextColor(Color.rgb(28,35,48));title.setTypeface(null,android.graphics.Typeface.BOLD);root.addView(title);
-  TextView sub=new TextView(this);sub.setText("功能精简设置 · 更改后请强制停止并重新打开夸克");sub.setTextSize(13);sub.setTextColor(Color.DKGRAY);root.addView(sub);
+  TextView sub=new TextView(this);sub.setText("更改后请强制停止并重新打开夸克");sub.setTextSize(13);sub.setTextColor(Color.DKGRAY);root.addView(sub);
   for(String[] section:sections){
    TextView heading=new TextView(this);heading.setText(section[0]);heading.setTextSize(17);heading.setTypeface(null,android.graphics.Typeface.BOLD);heading.setTextColor(Color.rgb(42,55,83));heading.setPadding(0,dp(24),0,dp(9));root.addView(heading);
    for(int j=1;j<section.length;j++){
     String key=section[j];int idx=index(key);if(idx<0)continue;
     LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(10),dp(8),dp(6),dp(8));row.setBackgroundColor(Color.WHITE);
-    TextView name=new TextView(this);name.setText("plus".equals(key)?"隐藏搜索框小插件（同时隐藏语音和相机）":("swipe".equals(key)?"禁止左滑进入 AI（同时隐藏模式指示点）":("cloud".equals(key)?"隐藏首页底栏网盘按钮":("dns".equals(key)?"禁止检测和谐网址(待实现)":("webads".equals(key)?"实验性网页请求过滤":names[idx])))));name.setTextSize(14);name.setTextColor(Color.rgb(34,40,52));
+    TextView name=new TextView(this);name.setText("plus".equals(key)?"隐藏搜索框小插件（同时隐藏语音和相机）":("swipe".equals(key)?"禁止左滑进入 AI（同时隐藏模式指示点）":("cloud".equals(key)?"隐藏首页底栏网盘按钮":("dns".equals(key)?"广告域名规则":("webads".equals(key)?"实验性网页请求过滤":names[idx])))));name.setTextSize(14);name.setTextColor(Color.rgb(34,40,52));
     row.addView(name,new LinearLayout.LayoutParams(0,dp(48),1));
     Switch toggle=new Switch(this);
+    toggle.setContentDescription(name.getText());
     toggle.setChecked(getSharedPreferences("flags",0).getBoolean(key,false));
     toggle.setOnCheckedChangeListener((button,checked)->{
      android.content.SharedPreferences.Editor edit=getSharedPreferences("flags",0).edit().putBoolean(key,checked);
@@ -45,7 +47,7 @@ public final class SettingsActivity extends Activity {
     View sep=new View(this);sep.setBackgroundColor(Color.rgb(237,239,244));root.addView(sep,new LinearLayout.LayoutParams(-1,dp(1)));
    }
   }
-  Button reset=new Button(this);reset.setText("全部恢复关闭");reset.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("恢复默认设置").setMessage("将关闭所有精简功能，重新打开夸克后生效。").setNegativeButton("取消",null).setPositiveButton("恢复", (d,w)->{getSharedPreferences("flags",0).edit().clear().apply();render();}).show());root.addView(reset);
+  Button reset=new Button(this);reset.setText("全部恢复关闭");reset.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("恢复默认设置").setMessage("将关闭模块所有功能，重新打开夸克后生效。").setNegativeButton("取消",null).setPositiveButton("恢复", (d,w)->{getSharedPreferences("flags",0).edit().clear().apply();render();}).show());root.addView(reset);
   Button support=new Button(this);support.setText("支持作者 · 自愿打赏");support.setOnClickListener(v->showSupportDialog());root.addView(support);
  }
  private void launchSupportSafely(){

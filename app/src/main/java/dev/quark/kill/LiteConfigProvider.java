@@ -5,8 +5,8 @@ import android.net.Uri;
 public final class LiteConfigProvider extends ContentProvider {
  private static final java.util.concurrent.atomic.AtomicInteger ERRORS=new java.util.concurrent.atomic.AtomicInteger();
  public static final String AUTH="dev.quark.kill.config";
- public static final String[] KEYS={"plus","voice","camera","ai","swipe","dots","resultvoice","novel","cloud","shortcuts","dns","webads","splash","shake","upsell","update","diagnostic"};
- public static final boolean[] DEFAULTS={false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false};
+ static final String WEB_VIDEO="webvideo";
+ public static final String[] KEYS={"plus","voice","camera","ai","swipe","dots","resultvoice","novel","cloud","shortcuts","dns","webads","splash","shake","upsell","update","diagnostic",WEB_VIDEO};
  public static Boolean readNullable(Context context,String key){
   if(context==null)return null;
   try(Cursor c=context.getContentResolver().query(Uri.parse("content://"+AUTH+"/flags"),new String[]{key},null,null,null)){
@@ -27,11 +27,7 @@ public final class LiteConfigProvider extends ContentProvider {
   MatrixCursor cursor=new MatrixCursor(projection);
   Object[] row=new Object[projection.length];
   android.content.SharedPreferences prefs=getContext().getSharedPreferences("flags",Context.MODE_PRIVATE);
-  for(int i=0;i<projection.length;i++){
-   int idx=0;
-   for(int j=0;j<KEYS.length;j++)if(KEYS[j].equals(projection[i])){idx=j;break;}
-   row[i]=prefs.getBoolean(projection[i],DEFAULTS[idx])?1:0;
-  }
+  for(int i=0;i<projection.length;i++)row[i]=prefs.getBoolean(projection[i],false)?1:0;
   cursor.addRow(row);return cursor;
  }
  @Override public String getType(Uri uri){return "vnd.android.cursor.item/vnd.quarklite.flag";}
